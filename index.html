@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="fa" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#020805">
+<title>NEON TERMINAL</title>
+<style>
+:root{--g:#59d98a;--b:#8affb0;--d:#367a50;--r:#ff6573}
+*{box-sizing:border-box}
+body{margin:0;background:#020805;color:var(--g);font:11px/1.25 Consolas,"Courier New",monospace;min-height:100vh}
+main{max-width:950px;margin:0 auto;padding:28px clamp(14px,5vw,45px)}
+.terminal{white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;line-height:1.25}
+.line{min-height:0;margin:0;padding:0;line-height:1.25}
+.promptline{display:flex;align-items:baseline;gap:0;margin:0;padding:0;line-height:1.25;min-height:0}
+.promptline .prefix{white-space:pre}
+input,select{font:inherit;color:var(--b);background:transparent;border:0;outline:0;border-radius:0;padding:0;margin:0;min-width:0;line-height:1.25}
+input::placeholder{color:#326344;opacity:1}
+.promptline input{flex:1;min-width:40px}
+input:focus,select:focus{border-bottom:1px solid #28633c}
+.cursor{display:inline-block;width:7px;height:14px;background:var(--g);vertical-align:middle;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+#gate{margin-top:0}
+#gate input{width:min(320px,65vw)}
+#terminalArea[hidden],#addArea[hidden]{display:none}
+#addArea{margin-top:4px}
+.formline{display:flex;align-items:baseline;gap:0;min-height:0;line-height:1.25;margin:0;padding:0}
+.formline label{white-space:pre;color:var(--g)}
+.formline input,.formline select{flex:1;min-width:0;line-height:1.25}
+.hint{display:none}
+#message{margin-top:5px;min-height:20px}
+.ok{color:var(--b)}.bad{color:var(--r)}
+.result{margin-top:0}
+.person-photo{display:block;width:112px;height:112px;object-fit:cover;margin:0 0 3px 0;border:1px solid #367a50}
+input[type=file]{font-size:10px;max-width:100%}
+@media(max-width:520px){main{padding:24px 14px}.formline{font-size:11px}body{font-size:10px}}
+</style>
+</head>
+<body>
+<main>
+ <div id="boot" class="terminal">&gt; INITIALIZING NEON TERMINAL...
+[ OK ] local database ready
+[ OK ] terminal environment ready
+ACCESS GRANTED</div>
+
+ <form id="gate" class="promptline">
+  <span class="prefix">&gt; password: </span>
+  <input id="password" type="password" autocomplete="current-password" autofocus aria-label="password">
+  <span class="cursor"></span>
+ </form>
+ <div id="gateMessage" class="bad"></div>
+
+ <section id="terminalArea" hidden>
+  <div class="terminal" id="history"></div>
+  <form id="commandForm" class="promptline">
+   <label class="prefix" for="command">&gt; name: </label>
+   <input id="command" autocomplete="off" placeholder="" aria-label="name">
+   <span class="cursor"></span>
+  </form>
+  <div id="message"></div>
+  <section id="addArea" hidden>
+   <form id="memberForm">
+    <div class="formline"><label for="first">name: </label><input id="first" required maxlength="40"></div>
+    <div class="formline"><label for="last">last name: </label><input id="last" required maxlength="50"></div>
+    <div class="formline"><label for="father">father name: </label><input id="father" maxlength="40"></div>
+    <div class="formline"><label for="className">class: </label><input id="className" maxlength="30"></div>
+    <div class="formline"><label for="nid">national ID: </label><input id="nid" maxlength="10" inputmode="numeric"></div>
+    <div class="formline"><label for="phone">phone: </label><input id="phone" maxlength="15" inputmode="tel"></div>
+    <div class="formline"><label for="age">age: </label><input id="age" type="number" min="1" max="120"></div>
+    <div class="formline"><label for="level">level: </label><select id="level"><option>عادی</option><option>فعال</option><option>مسئول</option></select></div>
+    <div class="formline"><label for="score">score: </label><input id="score" type="number" min="0" value="0"></div>
+    <div class="formline"><label for="photo">photo: </label><input id="photo" type="file" accept="image/*"></div>
+    <div class="formline"><label for="saveCommand">SAVE: </label><input id="saveCommand" autocomplete="off"></div>
+   </form>
+  </section>
+ 
+ </section>
+</main>
+<script>
+(()=>{
+ 'use strict';
+ const KEY='neon_terminal_members_v3';
+ const ACCESS_PASSWORD='admin123'; // رمز ورود را از اینجا تغییر دهید.
+ const $=id=>document.getElementById(id);
+ let members=[],editingId=null,lastFound=null,waitingForEditName=false;
+ try{members=JSON.parse(localStorage.getItem(KEY)||'[]');if(!Array.isArray(members))members=[]}catch{members=[]}
+ const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(members));return true}catch{return false}};
+ const wait=ms=>new Promise(r=>setTimeout(r,ms));
+ async function type(text){
+  const row=document.createElement('div');row.className='line';$('history').append(row);
+  for(const ch of text){row.textContent+=ch;await wait(12)}
+ }
+ function say(text,kind=''){
+  $('message').textContent=text;$('message').className=kind;
+ }
+ function digits(s){return String(s??'—').replace(/\d/g,d=>'۰۱۲۳۴۵۶۷۸۹'[d])}
+ function normalize(s){
+  return String(s??'').toLocaleLowerCase('fa')
+   .replace(/[يى]/g,'ی').replace(/ك/g,'ک')
+   .replace(/[\u064B-\u065F\u0670]/g,'')
+   .replace(/[\u200c\u200f\u200e]/g,'')
+   .replace(/\s+/g,' ').trim();
+ }
+ function imageData(file){
+  return new Promise((resolve,reject)=>{
+   if(!file){resolve('');return}
+   if(!file.type.startsWith('image/')){reject(new Error('invalid image'));return}
+   const reader=new FileReader();
+   reader.onerror=()=>reject(new Error('read failed'));
+   reader.onload=()=>{
+    const img=new Image();
+    img.onerror=()=>reject(new Error('image failed'));
+    img.onload=()=>{
+     const max=560,scale=Math.min(1,max/Math.max(img.width,img.height));
+     const canvas=document.createElement('canvas');
+     canvas.width=Math.max(1,Math.round(img.width*scale));
+     canvas.height=Math.max(1,Math.round(img.height*scale));
+     canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
+     resolve(canvas.toDataURL('image/jpeg',0.76));
+    };
+    img.src=reader.result;
+   };
+   reader.readAsDataURL(file);
+  });
+ }
+ function showPerson(p){
+  lastFound=p;
+  (async()=>{
+   $('history').replaceChildren();
+   if(p.photo){
+    const pic=document.createElement('img');pic.className='person-photo';pic.src=p.photo;pic.alt='';
+    $('history').append(pic);
+   }
+   const rows=[
+    '> '+p.first+' '+p.last,
+    'name: '+p.first,
+    'last name: '+p.last,
+    'father name: '+(p.father||'—'),
+    'class: '+(p.className||'—'),
+    'national ID: '+(p.nid||'—'),
+    'phone: '+(p.phone||'—'),
+    'age: '+(p.age?digits(p.age):'—'),
+    'level: '+(p.level||'عادی'),
+    'score: '+digits(p.score||0)
+   ];
+   for(const row of rows) await type(row);
+  })();
+ }
+ $('gate').addEventListener('submit',e=>{
+  e.preventDefault();
+  if($('password').value!==ACCESS_PASSWORD){$('gateMessage').textContent='> ACCESS DENIED';$('password').value='';$('password').focus();return}
+  $('gate').hidden=true;$('gateMessage').textContent='';$('terminalArea').hidden=false;$('command').focus();
+ });
+ $('commandForm').addEventListener('submit',e=>{
+  e.preventDefault();
+  const q=$('command').value.trim();$('command').value='';
+  if(!q)return;
+  const normalized=normalize(q);
+  if(normalized==='افزودن'||normalized==='add'){
+   editingId=null;waitingForEditName=false;$('memberForm').reset();$('score').value=0;$('addArea').hidden=false;say('','');$('first').focus();return;
+  }
+  if(normalized==='ویرایش'||normalized==='edit'){
+   waitingForEditName=true;
+   $('history').replaceChildren();
+   type('> name:');
+   say('');
+   return;
+  }
+  if((normalized==='حذف'||normalized==='delete')&&lastFound){
+   members=members.filter(m=>m.id!==lastFound.id);save();lastFound=null;$('history').replaceChildren();say('> member deleted','ok');return;
+  }
+  const matches=members.filter(p=>{
+   const haystack=normalize([p.first,p.last,p.father,p.className].filter(Boolean).join(' '));
+   return haystack.includes(normalized);
+  });
+  if(!matches.length){$('history').replaceChildren();type('> کاربری با این مشخصات یافت نشد');lastFound=null;waitingForEditName=false;return}
+  if(waitingForEditName){
+   if(matches.length===1){waitingForEditName=false;lastFound=matches[0];fillForm(matches[0]);return}
+   $('history').replaceChildren();
+   (async()=>{for(const p of matches)await type('> '+p.first+' '+p.last)})();
+   say('> نام کامل‌تری وارد کنید.','bad');
+   return;
+  }
+  if(matches.length===1){showPerson(matches[0]);return}
+  $('history').replaceChildren();
+  (async()=>{for(const p of matches)await type('> '+p.first+' '+p.last)})();
+  lastFound=null;
+ });
+ function fillForm(p){
+  editingId=p.id;$('addArea').hidden=false;
+  $('first').value=p.first;$('last').value=p.last;$('father').value=p.father||'';$('className').value=p.className||'';$('nid').value=p.nid||'';
+  $('phone').value=p.phone||'';$('age').value=p.age||'';$('level').value=p.level||'عادی';$('score').value=p.score||0;
+  $('photo').value='';$('saveCommand').focus();say('','');
+ }
+ $('memberForm').addEventListener('submit',e=>e.preventDefault());
+ $('saveCommand').addEventListener('keydown',async e=>{
+  if(e.key!=='Enter')return;e.preventDefault();
+  if($('saveCommand').value.trim().toLowerCase()!=='save') {say('> برای ثبت، دقیقاً SAVE را وارد کنید.','bad');return}
+  const old=editingId?members.find(m=>m.id===editingId):null;
+  const item={id:editingId||(window.crypto?.randomUUID?.()||String(Date.now())+Math.random()),first:$('first').value.trim(),last:$('last').value.trim(),father:$('father').value.trim(),className:$('className').value.trim(),nid:$('nid').value.trim(),phone:$('phone').value.trim(),age:$('age').value,level:$('level').value,score:$('score').value||0,photo:old?.photo||''};
+  if(!item.first||!item.last){say('> NAME REQUIRED','bad');return}
+  if(item.nid&&!/^[0-9۰-۹]{10}$/.test(item.nid)){say('> INVALID NATIONAL ID','bad');return}
+  const file=$('photo').files[0];
+  try{if(file)item.photo=await imageData(file)}catch{say('> IMAGE ERROR','bad');return}
+  if(editingId)members=members.map(m=>m.id===editingId?item:m);else members.push(item);
+  if(!save()){say('> STORAGE ERROR','bad');return}
+  const wasEdit=!!editingId;editingId=null;waitingForEditName=false;$('addArea').hidden=true;$('memberForm').reset();$('saveCommand').value='';
+  $('history').replaceChildren();say(wasEdit?'> UPDATED':'> SAVED','ok');
+  $('command').value=item.first+' '+item.last;showPerson(item);$('command').value='';
+ });
+})();
+</script>
+</body>
+</html>
